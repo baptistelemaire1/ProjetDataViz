@@ -1,0 +1,502 @@
+---
+title: "Projet Data Visualisation ESNAULT LEMAIRE VERET"
+output:   
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    social: menu
+    source_code: embed
+date: "2024-01-14"
+---
+
+```{r}
+library(pacman)
+
+pacman::p_load(devtools,rmarkdown,ggplot2,scales,lime,rmdformats, data.table,
+               sn,scatterplot3d,rhandsontable,ggraph,tidygraph,knitr,
+               openxlsx,vroom,tidyverse,DT,rpart,rpart.plot,ggmap,
+               flexdashboard,geojsonR,maptiles,mapsf,osrm,rgdal,sf,
+               leaflet,lubridate, reshape2, RColorBrewer, shiny, plotly,
+               highcharter, leaflet.extras, shinydashboard,crosstalk,
+               htmltools,DT,igraph,visNetwork,anomalize, tibbletime, D3partitionR, 
+               hrbrthemes,png,reshape,ggthemes,gridExtra,ggrepel,lubridate,sp,summarywidget)
+
+
+rm(list=ls())
+
+setwd("C:/Users/Senzzen/Desktop/Data Visualization/SHP")
+
+code_admin_1 = read_sf(dsn="gadm41_KOR_1.shp", layer="gadm41_KOR_1")
+code_admin_0 = read_sf(dsn="gadm41_KOR_0.shp", layer="gadm41_KOR_0")
+code_admin_3 = read_sf(dsn="gadm41_KOR_3.shp", layer="gadm41_KOR_3")
+
+acces = "C:/Users/Senzzen/Desktop/Data Visualization/"
+
+case = read.csv(paste(acces,"Case.csv", sep=""),header=T, sep=",")
+patient = read.csv(paste(acces,"PatientInfo.csv", sep=""),header=T, sep=",")
+time = read.csv(paste(acces,"Time.csv", sep=""),header=T, sep=",")
+t_age = read.csv(paste(acces,"TimeAge.csv", sep=""),header=T, sep=",")
+t_gender = read.csv(paste(acces,"TimeGender.csv", sep=""),header=T, sep=",")
+t_provin = read.csv(paste(acces,"TimeProvince.csv", sep=""),header=T, sep=",")
+region = read.csv(paste(acces,"Region.csv", sep=""),header=T, sep=",")
+weather = read.csv(paste(acces,"Weather.csv", sep=""),header=T, sep=",")
+floating = read.csv(paste(acces,"SeoulFloating.csv", sep=""),header=T, sep=",")
+policy = read.csv(paste(acces,"Policy.csv", sep=""),header=T, sep=",")
+
+```
+```{r,include=F}
+province_df= fortify( st_transform(code_admin_1, CRS("+proj=longlat +datum=WGS84")),region="NAME_1")
+
+x = unique(province_df$id)
+x = sort(x)
+t_provin_02.29 <- t_provin %>% filter(date %in% "2020-02-29")
+y = t_provin_02.29[order(t_provin_02.29[,3],decreasing=F),]
+which(x != y)
+y[which(x != y)]
+rm(x,y)
+
+t_provin_02.29[17,3] = "Jeju" 
+t_provin_02.29 = t_provin_02.29[order(t_provin_02.29[,3],decreasing=F),]
+t_provin_02.29$code = c(2,10,11,3,6,9,5,8,14,15,4,16,12,14,17,1,7)
+
+province_cas <- merge(province_df, t_provin_02.29, by.x="NAME_1", by.y="province")
+```
+
+# National
+
+## Row 
+
+### Carte de la situation épidémique le 29 février 2020 (jour où le nombre de cas confirmés était le plus grand)
+
+```{r,echo=F}
+palette_rev = (brewer.pal(10,"YlGnBu"))
+
+pal <- colorQuantile(palette="YlGnBu", NULL, n=10 )
+popupinfo <- paste0("<strong>Au 29/02/20: <strong>",
+                    "<br><strong>Province: </strong>", 
+                    province_cas$NAME_1,
+                    "<br><strong>Nombre de cas: </strong>", 
+                    trunc(province_cas$confirmed),
+                    "<br><strong>Nombre de décès: </strong>",
+                    trunc(province_cas$deceased))
+
+
+leaflet(data = province_cas) %>%
+  addTiles() %>%
+  addPolygons(fillColor = pal(province_cas$confirmed),
+              fillOpacity=0.8,
+              color = "Black", 
+              weight = 1,
+              stroke = TRUE,
+              popup=popupinfo)
+
+```
+
+### Evolution du rapport Testés/Positifs
+
+```{r, echo=F}
+time$date <- as.Date(time$date)
+
+time <- time %>%
+        mutate(confirmed_rate= confirmed/test,
+               released_rate = released/confirmed,
+               inpatient_number = confirmed-released-deceased)
+
+g1 <- time %>%
+  ggplot(aes(x=date, y=confirmed_rate)) +
+  geom_line(color="red") +
+  geom_point() +
+  ylim(c(0.0,0.10)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=30, hjust=1)) +
+  ylab(label = "taux de positivité") +
+  xlab(label = "")
+
+ggplotly(g1)
+```
+
+### Nombre de cas confirmés par jour
+
+```{r, echo=F}
+daily_added_confirmed <- diff(time$confirmed)
+daily_added_confirmed <- append(daily_added_confirmed,1,after = 0)
+daily_added_confirmed <- as.numeric(daily_added_confirmed)
+time <- time %>%
+  mutate(daily_added_confirmed = daily_added_confirmed)
+
+g2 <- ggplot(data=time, aes(x=date, y=daily_added_confirmed)) +
+  geom_point(size=0.5) + 
+  geom_line(color="red") +
+  #geom_vline(xintercept = as.numeric(time$date[c(63,107)]), color="blue", linetype=2) +
+  #geom_vline(xintercept = as.numeric(time$date[77]), color="purple", linetype=3) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=30, hjust=1)) +
+  ylab(label = "nombre de cas") +
+  xlab(label = "")
+
+ggplotly(g2)
+```
+
+## Row 
+
+### Cas cumulés par genre
+
+```{r, echo=F}
+t_gender$date<-as.Date(t_gender$date)
+
+t_gender %>%
+  ggplot(aes(x=date, y=confirmed, color=sex, group=sex)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=30, hjust=1)) +
+  ylab("nombre de cas") +
+  xlab(label = "")
+```
+
+### Cas cumulés par classe d'âge
+
+```{r, echo=F}
+t_age$date<-as.Date(t_age$date)
+
+t_age %>%
+  ggplot(aes(x=date, y=confirmed, color=age, group=age)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=30, hjust=1)) +
+  ylab("nombre de cas") +
+  xlab(label = "")
+```
+
+### Taux de létalité du Covid-19 par classe d'âge
+
+```{r,echo=F}
+t_age$date<-as.Date(t_age$date)
+
+t_age %>%
+  ggplot(aes(x=date, y=confirmed, color=age, group=age)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=30, hjust=1)) +
+  ylab("nombre de cas") +
+  xlab(label = "")
+```
+
+# Province
+
+## Inputs {.sidebar}
+
+```{r,echo=F}
+
+#http://rstudio.github.io/crosstalk/using.html
+#https://kent37.github.io/summarywidget/using.html
+
+
+shared_t_provin <-  SharedData$new(t_provin)
+
+
+ filter_select(
+    id = "choix date",
+    label = "date",
+    sharedData = shared_t_provin,
+    group = ~`date`,
+    multiple = FALSE
+  )
+
+ filter_select(
+    id = "choix province",
+    label = "province",
+    sharedData = shared_t_provin,
+    group = ~`province`,
+    multiple = FALSE
+  )
+
+  
+
+ 
+# summarywidget(shared_t_age) 
+#summarywidget(shared_t_age, statistic='sum', column='confirmed', digits=0)
+
+```
+
+### <font size="3"> Nombre de cas positifs </font>
+
+```{r}
+summarywidget(
+    shared_t_provin,
+    statistic = 'sum',
+    column = 'confirmed',
+    digits = 0
+  )
+```
+
+
+### <font size="3"> Nombre de patients hospitalisés </font>
+
+```{r}
+summarywidget(
+    shared_t_provin,
+    statistic = 'sum',
+    column = 'released',
+    digits = 0
+  )
+```
+
+### <font size="3"> Nombre de patients décédés </font>
+
+```{r}
+summarywidget(
+    shared_t_provin,
+    statistic = 'sum',
+    column = 'deceased',
+    digits = 0
+  )
+```
+
+## Row 
+
+```{r, include=FALSE}
+
+patient_graph <- patient
+patient_graph$Date_Conf <- as.Date(patient_graph$confirmed_date)
+patient_graph$Date_Rec <- as.Date(patient_graph$released_date)
+patient_graph$DaysToRec <- as.numeric(patient_graph$Date_Rec  - patient_graph$Date_Conf)
+
+patient_graph <- patient_graph %>% mutate(age =  gsub("s","", age)) %>% 
+                                   mutate(age = as.numeric(age)) %>%
+                                   mutate(age_range = cut(age, breaks = seq(0, 100, 10),
+                                   right = FALSE, labels =   
+                                   c("less_10","10~19","20~29","30~39","40~49",
+                                   "50~59","60~69","70~79","80~89","over_90"))) %>% 
+                                   mutate(age_range = as.character(age_range)) %>% 
+                                   mutate(id = 1:length(patient_id)) %>%
+                                   mutate(new = NA)
+
+for(i in 1:length(patient_graph$patient_id)){
+  patient_graph[which(patient_graph[i,1] == patient_graph[,8]),20] <- patient_graph[i,19] 
+}
+
+patient_graph <- patient_graph %>% mutate(infected_by=new)  %>% select(-new) %>% select(-patient_id) %>% select(-age)
+
+patient_graph <- patient_graph[,c(17,1,16,4,3,5,6,7,14,15,13)]
+names(patient_graph) <- c("ID", "Sex", "Age", "City", "Region", "Infection_reason", "Infected_by", "Contact_number", "Date_Confirm", "Date_Recovered", "Days_To_Recover")
+
+patient_graph$Contact_number <- as.numeric(patient_graph$Contact_number)
+
+#patient_graph$sex[patient_graph$sex==""] <- NA
+#patient_graph$infection_case[patient_graph$infection_case==""] <- NA
+
+```
+
+### A
+
+
+```{r, echo=FALSE}
+
+Table <- as.data.frame(table(patient_graph$Infection_reason))
+names(Table) <- c("Reason", "n")
+
+Table <- Table[between(Table$n, 40, 100000),]
+
+ggplot(Table, aes(reorder(Reason, +n),n))+
+  geom_bar(stat = "identity", colour = "black", fill = "darkolivegreen3", alpha = 0.9)+
+  coord_flip()+
+  geom_text(aes(label = n, y = n+60), size = 6.2)+
+  scale_y_continuous(limits = c(0, max(Table$n)*1.11))+
+  labs(title = "Méthode de transmission", y = "Nombre d'infectés", x = "Raison de l'infection")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text(size = 15.5, face = "bold"), axis.text.y = element_text(size = 14), axis.text.x = element_text(size = 15), axis.line = element_line(size = 0.4, colour = "grey10"), plot.caption = element_text(color = "gray65", face = "bold", size = 10),
+        legend.background = element_rect(fill = "#fff6ed"), plot.subtitle = element_text(size = 15), panel.background = element_rect(fill = "white"))
+
+```
+
+### B
+
+```{r, echo=FALSE}
+Table3 <- as.data.frame(table(patient_graph$Region))
+names(Table3) <- c("Region", "n")
+Table3 <- Table3[Table3$Region!="",]
+
+Table3 <- Table3[between(Table3$n, 80, 100000),]
+
+ggplot(Table3, aes(reorder(Region, +n),n))+
+  geom_bar(stat = "identity", colour = "black", fill = "mediumpurple3", alpha = 0.9)+
+  coord_flip()+
+  geom_text(aes(label = n, y = n+17), size = 6.2)+
+  scale_y_continuous(limits = c(0, max(Table3$n)*1.07))+
+  labs(title = "Region où l'infection a été détectée", 
+       y = "Nombre d'infectés", x = "Region")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text(size = 15.5, face = "bold"), axis.text.y = element_text(size = 15), axis.text.x = element_text(size = 15),
+         axis.line = element_line(size = 0.4, colour = "grey10"), plot.caption = element_text(color = "gray65", face = "bold", size = 10),
+        legend.background = element_rect(fill = "#fff6ed"), plot.subtitle = element_text(size = 15), panel.background = element_rect(fill = "white"))
+
+```
+
+## Row
+
+### C
+
+```{r, echo=FALSE}
+Table4 <- patient_graph %>%
+  filter(year(Date_Confirm) > 2019) %>%
+  filter(Region %in% Table3[1:4,1]) %>%
+  group_by(Date_Confirm, Region) %>%
+  summarise(x = n())
+ggplot(Table4, aes(Date_Confirm, x))+
+  geom_line(size = 1.5, alpha = 0.8, col = "gray65")+
+  geom_smooth(method = "loess", color = "firebrick3", size = 1.9, formula = y ~ x, fill = "firebrick4", alpha = 0.32)+
+  facet_wrap(.~Region)+
+  scale_y_continuous(limits = c(0,50))+
+  labs(title = "Number de nouveaux infectés dans les régions les plus touchées", subtitle = "par Date and Region (n = 1047)", 
+       y = "Nombre d'infectés (jusqu'a 50 par jour)", x = "Date (en 2020)")+
+  scale_x_date(date_labels = "%b %d", date_breaks = "50 days")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text(size = 15.5, face = "bold"), axis.text = element_text(size = 15), strip.text.x = element_text(size = 14, face = "bold"), axis.line = element_line(size = 0.4, colour = "grey10"), plot.caption = element_text(color = "gray65", face = "bold", size = 10),
+        plot.subtitle = element_text(size = 15), panel.background = element_rect(fill = "white"), strip.background = element_rect(fill = "#fff6ed"))
+```
+
+### D
+
+```{r, echo=FALSE}
+geoloc = data.frame(
+  confirmed = case$confirmed,
+  lat = case$latitude,
+  long = case$longitude,
+  province = case$province)
+
+geoloc$lat = as.numeric(geoloc$lat)
+geoloc$long = as.numeric(geoloc$long)
+geoloc = geoloc[is.na(geoloc$lat)==FALSE,]
+geoloc = geoloc[is.na(geoloc$long)==FALSE,]
+
+geoloc_final = geoloc[geoloc$dep==130,]
+leaflet(geoloc) %>% addTiles() %>%addWebGLHeatmap(size=30,units="px")
+
+
+
+```
+
+# Cluster épidémique sur les cas connus
+
+```{r, include=FALSE}
+patient_2 <- patient %>% 
+  
+  mutate(age =  gsub("s","", age)) %>% 
+  
+  mutate(age = as.numeric(age)) %>% 
+  
+  mutate(age_range = cut(age,
+                         breaks = seq(0, 100, 10),
+                         right = FALSE,
+                         labels = c("less_10","10~19","20~29","30~39","40~49",
+                                    "50~59","60~69","70~79","80~89","over_90"))) %>% 
+  
+  mutate(age_range = as.character(age_range)) %>% 
+  mutate(id = 1:length(patient_id)) %>%
+  mutate(new = NA) 
+
+for(i in 1:length(patient_2$patient_id)){
+  patient_2[which(patient_2[i,1] == patient_2[,8]),17] <- patient_2[i,16] 
+}
+
+patient_3 <- patient_2 %>% mutate(infected_by=new) %>% filter(infected_by > 0) %>% select(-new) %>% select(-patient_id) %>% filter(confirmed_date >= '2020-02-28' & confirmed_date <= '2020-02-29')
+
+patient_graph_2 <- patient_graph %>% filter(!is.na(Date_Confirm))
+
+ties <- patient_3 %>% select(infected_by, id) %>% 
+  filter(!is.na(infected_by)) %>% 
+  setNames(c("from", "to")) 
+
+nodes <- tibble(name = union(ties$from, ties$to)) %>% 
+  left_join(patient_3, by=c("name"="id")) %>% 
+  mutate(id = name, label = paste0("Patient ",name)) %>% 
+  select(-name) %>% 
+  select(id,label,everything())
+
+g <- graph_from_data_frame(d = ties,
+                           directed = TRUE,
+                           vertices = nodes)
+
+
+```
+
+## Row 
+
+### Transmision par region lors du pic de l'épidémie
+
+```{r, echo=FALSE}
+
+V(g)$color <- nodes$province %>% as.character 
+
+a <- grid::arrow(type = "open", length = unit(.04, "inches"))
+
+ggraph(g, layout = "fr") +
+  geom_edge_link(arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(aes(color  = color), size = 3,  show.legend = TRUE) +
+  geom_node_text(aes(label = name), vjust = 1.5, hjust = 1, check_overlap=TRUE, colour = "red" , size = 3 ) +
+  theme(legend.position = "bottom",
+        plot.title=element_text(family = "serif", face = "bold", 
+                                hjust = 0.5, size = 18, color = "darkblue"))
+
+```
+
+### Transmision par cas d'infection lors du pic de l'épidémie
+
+```{r}
+# [Visualization #3]: Networks by infection_reason
+
+# As you can see, NA colums should be supplemented in order to investigate more
+V(g)$color <- nodes$infection_case %>% as.character
+
+a <- grid::arrow(type = "open", length = unit(0.05, "inches"))
+
+ggraph(g, layout = "fr") +
+  geom_edge_link(arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(aes(color  = color), size = 3,  show.legend = TRUE) +
+  geom_node_text(aes(label = name), vjust = 1.5, hjust = 1, check_overlap=TRUE, colour = "red" , size = 3 ) +
+  theme(legend.position = "bottom",
+        plot.title=element_text(family = "serif", face = "bold", 
+                                hjust = 0.5, size = 25, color = "darkblue"))
+```
+
+## Row 
+
+### Transmision par état lors du pic de l'épidémie
+
+```{r}
+# [Visualization #4]: Networks by state
+
+#It looks like that even the 
+V(g)$color <- nodes$state %>% as.character
+
+a <- grid::arrow(type = "open", length = unit(0.05, "inches"))
+
+ggraph(g, layout = "fr") +
+  geom_edge_link(arrow = a, end_cap = circle(0.05, 'inches')) +
+  geom_node_point(aes(color  = color), size = 3,  show.legend = TRUE) +
+  geom_node_text(aes(label = name), vjust = 1.5, hjust = 1, check_overlap=TRUE, colour = "red" , size = 3 ) +
+  theme(legend.position = "bottom",
+        plot.title=element_text(family = "serif", face = "bold", 
+                                hjust = 0.5, size = 25, color = "darkblue"))
+```
+
+### Classement des individus ayant transmit le plus le virus  
+
+```{r}
+# the number of infections by each person
+# As you can see the super-influencers of corona 19 are id #31, #6, #780, #372, #126
+result <- degree(g, mode="out")
+
+result_df <- tibble(name = names(result),
+                    n_outbreak = as.vector(result))
+
+result_df %>% 
+  mutate(name = reorder(name, n_outbreak)) %>% 
+  filter(n_outbreak >= 2) %>% 
+  ggplot(aes(x=name, y=n_outbreak)) +
+  geom_bar(stat="identity") +
+  coord_flip()
+```
+
